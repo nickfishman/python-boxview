@@ -7,6 +7,7 @@ import six
 import datetime
 import simplejson as json
 import requests
+import time
 from requests.structures import CaseInsensitiveDict
 from requests.adapters import HTTPAdapter
 from requests.utils import default_user_agent
@@ -25,6 +26,11 @@ UPLOAD_URL = '{}{}/'.format(BASE_UPLOAD_URL, API_VERSION)
 
 QUEUED, PROCESSING, DONE, ERROR = ('queued', 'processing', 'done', 'error')
 
+# Used for two things:
+# - max_retries parameter for requests.adapters.HTTPAdapter (for failed or timed out responses)
+# - maximum number of times we try to reissue requests after successful HTTP 202 responses
+#   that specify Retry-After headers
+MAXIMUM_RETRIES = 3
 
 def get_mimetype_from_headers(headers):
     content_type = headers.get('Content-Type', '')
@@ -52,7 +58,7 @@ def default_headers():
     })
 
 
-def default_session(max_retries=3):
+def default_session(max_retries=MAXIMUM_RETRIES):
     session = requests.Session()
     session.mount('http://', HTTPAdapter(max_retries=max_retries))
     session.mount('https://', HTTPAdapter(max_retries=max_retries))
@@ -61,9 +67,11 @@ def default_session(max_retries=3):
 
 class BoxViewError(Exception):
 
-    def __init__(self, response):
+    def __init__(self, response, message=None):
         Exception.__init__(self)
         self.response = response
+        # Optional messsage that gets displayed if there's no JSON response body
+        self.message = message
 
     def _get_error(self):
         if self.response.headers.get('Content-Type') == 'application/json':
@@ -72,7 +80,10 @@ class BoxViewError(Exception):
                                indent=4,
                                separators=(',', ': '))
             return '\n{}'.format(error)
-        return self.response.reason or ''
+        elif self.message:
+            return self.message
+        else:
+            return self.response.reason or ''
 
     def __str__(self):
         return "HTTP Status: {} {}".format(
@@ -128,7 +139,7 @@ class BoxView(object):
 
         self.session = session
 
-    def request(self, method, url, **kwargs):
+    def request(self, method, url, retry_attempt=0, **kwargs):
         url = urljoin(self.base_url, url)
 
         kwargs.setdefault('timeout', self.timeout)
@@ -137,6 +148,15 @@ class BoxView(object):
         response = self.session.request(method, url, **kwargs)
         if not response.ok:
             raise BoxViewError(response)
+
+        if response.status_code == requests.codes.ACCEPTED and "retry-after" in response.headers:
+            if retry_attempt > MAXIMUM_RETRIES:
+                raise BoxViewError(response, "Maximum retries exceeded")
+
+            # TODO: handle date format for Retry-After header
+            retry_after = response.headers["retry-after"]
+            time.sleep(float(retry_after))
+            return self.request(method, url, retry_attempt=retry_attempt + 1, **kwargs)
 
         return response
 
@@ -267,7 +287,6 @@ class BoxView(object):
         for chunk in response.iter_content():
             stream.write(chunk)
 
-        # TODO: handle retry redirect, blocking or not?
         return get_mimetype_from_headers(response.headers)
 
     def get_document_thumbnail_to_file(self,

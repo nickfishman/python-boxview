@@ -61,7 +61,7 @@ class BoxViewTestCase(unittest.TestCase):
         self.assertEqual('text/plain', get_mimetype_from_headers(headers))
 
     @patch.object(Session, 'request')
-    def test_crate_document_from_url(self, mock_request):
+    def test_create_document_from_url(self, mock_request):
         response = Response()
         response.status_code = 201
         response._content = json.dumps(test_document)
@@ -73,18 +73,6 @@ class BoxViewTestCase(unittest.TestCase):
 
         # url of file param is required
         self.assertRaises(ValueError, self.api.create_document)
-
-    @patch.object(Session, 'request')
-    def test_create_document_from_url(self, mock_request):
-        response = Response()
-        response.status_code = 201
-        response._content = json.dumps(test_document)
-        mock_request.return_value = response
-
-        result = self.api.create_document_from_url(test_url,
-                                                   name='Test Document')
-        self.assertIsNotNone(result)
-        self.assertEqual(result, test_document)
 
     @patch.object(Session, 'request')
     def test_create_document_from_file(self, mock_request):

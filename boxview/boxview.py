@@ -140,23 +140,22 @@ class BoxView(object):
 
         return response
 
-    def create_document(self, url=None, file=None, name=None):
+    def create_document(self, url=None, file=None, name=None, options=None):
         if not url and not file:
             raise ValueError("Document url or file is required")
         if url:
-            return self.create_document_from_url(url, name)
+            return self.create_document_from_url(url, name, options)
         else:
-            return self.create_document_from_file(file, name)
+            return self.create_document_from_file(file, name, options)
 
-    def create_document_from_file(self, file, name=None):
+    def create_document_from_file(self, file, name=None, options=None):
 
         def _create_from_file(file):
             url = urljoin(UPLOAD_URL, 'documents')
             files = {'file': file}
+            data = options or {}
             if name:
-                data = {'name': name}
-            else:
-                data = None
+                data['name'] = name
             response = self.request('POST',
                                     url,
                                     data=data,
@@ -169,8 +168,9 @@ class BoxView(object):
             with open(file, 'rb') as file:
                 return _create_from_file(file)
 
-    def create_document_from_url(self, url, name=None):
-        data = {'url': url}
+    def create_document_from_url(self, url, name=None, options=None):
+        data = options or {}
+        data['url'] = url
         if name:
             data['name'] = name
         headers = {'Content-type': 'application/json'}
@@ -251,6 +251,37 @@ class BoxView(object):
         url = 'documents/{}/content'.format(document_id)
         response = self.request('HEAD', url)
         return get_mimetype_from_headers(response.headers)
+
+    def get_document_thumbnail(self,
+                               stream,
+                               document_id,
+                               width,
+                               height):
+        url = 'documents/{}/thumbnail'.format(document_id)
+        params = {'width': width}
+        if height:
+            params['height'] = height
+
+        response = self.request('GET', url, stream=True, params=params)
+
+        for chunk in response.iter_content():
+            stream.write(chunk)
+
+        # TODO: handle retry redirect, blocking or not?
+        return get_mimetype_from_headers(response.headers)
+
+    def get_document_thumbnail_to_file(self,
+                                       filename,
+                                       document_id,
+                                       width,
+                                       height):
+        with open(filename, 'wb') as fp:
+            return self.get_document_thumbnail(fp, document_id, width, height)
+
+    def get_document_thumbnail_to_string(self, document_id, width, height):
+        fp = six.StringIO()
+        mimetype = self.get_document_thumbnail(fp, document_id, width, height)
+        return fp.getvalue(), mimetype
 
     def create_session(self, document_id, duration=None, expires_at=None):
         data = {'document_id': document_id}
